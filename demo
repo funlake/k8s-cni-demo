@@ -76,8 +76,9 @@ if [[ $CNI_COMMAND == "ADD" ]]; then
 fi
 
 if [[ $CNI_COMMAND == "DEL" ]]; then
-   ip netns del $nsname || true
-   ip link del veth_root || true
+   #ip netns del $nsname || true
+   #ip link del veth_root || true
+   rm -f /var/run/netns/$CNI_CONTAINERID
    echo "delete"
 fi
 if [[ $CNI_COMMAND == "VERSION" ]]; then
