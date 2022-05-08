@@ -1,0 +1,88 @@
+#!/bin/bash
+
+exec 2>> /var/log/demolog
+
+echo $CNI_COMMAND >> /var/log/demolog
+
+# Read stdin
+
+conf=$(cat /dev/stdin)
+
+# Retrieve custom vars
+bridge=$(echo $conf | jq -r ".bridge")
+gateway=$(echo $conf | jq -r ".gateway")
+
+# Choose  for ns
+nsname=$CNI_CONTAINERID
+
+# IPAM
+ip_addr=10.11.0.100/24
+
+if [[ $CNI_COMMAND == "ADD" ]]; then
+  # Create namespace
+  mkdir -p /var/run/netns
+  ln -sfT $CNI_NETNS /var/run/netns/$nsname
+  
+  # Veth pair
+  ip link add veth_root type veth peer name veth_ns
+  
+  # Handle veth_root
+  ip link set veth_root master $bridge
+  ip link set dev veth_root up
+  #brctl addif $bridge veth_root
+  ip link set dev $bridge up
+  #ifconfig $bridge up
+  
+  #Move veth_ns to namespace
+  ip link set veth_ns netns $nsname
+  ip -netns $nsname link set dev veth_ns down
+  ip -netns $nsname link set veth_ns name $CNI_IFNAME
+  ip -netns $nsname link set dev $CNI_IFNAME up
+
+  #IPAM
+  ip -netns $nsname addr add $ip_addr dev $CNI_IFNAME
+
+  #Routing
+  ip -netns $nsname route add default via $gateway
+
+  #Mac of added interface
+  mac=$(ip -netns $nsname link show $CNI_IFNAME | grep link | awk '{print $2}')
+
+  # interface index of added interface
+  interface_index=$(ip -netns $nsname link show $CNI_IFNAME | grep $CNI_IFNAME | awk -F ':' '{print $1}')
+
+  OUTPUT_TEMPLATE='
+  {
+   "cniVersion": "0.3.1",
+   "interfaces": [
+    {
+      "name": "%s",
+      "mac": "%s",
+      "sandbox": "%s"
+    }
+   ],
+   "ips": [
+    {
+      "version": "4",
+      "address": "%s",
+      "gateway": "%s",
+      "interface": %s
+    }
+   ]
+  }'
+  OUTPUT=$(printf "$OUTPUT_TEMPLATE" $CNI_IFNAME $mac $CNI_NETNS $ip_addr $gateway $interface_index)
+  echo $OUTPUT
+  echo $OUTPUT >> /var/log/demolog
+fi
+
+if [[ $CNI_COMMAND == "DEL" ]]; then
+   #ip netns del $nsname || true
+   #ip link del veth_root || true
+   echo "delete"
+fi
+if [[ $CNI_COMMAND == "VERSION" ]]; then
+   echo '{
+    "cniVersion": "0.3.1",
+    "supportedVersions": ["0.3.0","0.3.1","0.4.0"]
+   }'
+fi
